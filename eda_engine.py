@@ -807,9 +807,15 @@ def generate_auto_eda_report(
     # Step 4: Generate multivariate plots
     
     # 4a: Correlation heatmap (if numeric features exist)
-    if numeric_features_subset:
+    # Filter out ID columns (id, passengerid, index, etc.) - they are not meaningful for correlation
+    numeric_for_corr = [
+        col for col in numeric_features_subset 
+        if 'id' not in col.lower() and 'index' not in col.lower()
+    ]
+    
+    if numeric_for_corr:
         try:
-            fig = plot_correlation_heatmap(df, numeric_features_subset)
+            fig = plot_correlation_heatmap(df, numeric_for_corr)
             report['summary_plots']['correlation_heatmap'] = fig
             
         except Exception as e:
