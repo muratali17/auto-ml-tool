@@ -112,16 +112,25 @@ def _determine_problem_type(target_series: pd.Series) -> str:
     
     unique_count = target_clean.nunique()
     
-    # If numeric with many unique values, treat as regression
-    if is_numeric and unique_count > 10:
-        return 'REGRESSION'
-    
-    # If numeric with few unique values, treat as classification
-    if is_numeric and unique_count == 2:
-        return 'BINARY'
-    
-    if is_numeric and unique_count > 2:
-        return 'MULTICLASS'
+    # If numeric, distinguish between classification and regression
+    if is_numeric:
+        # Check if it's an integer type (likely categorical) or float (likely continuous)
+        is_integer = all(isinstance(x, (int, np.integer)) or (isinstance(x, float) and x.is_integer()) 
+                         for x in target_clean if pd.notna(x))
+        
+        # Integer with <= 20 unique values: likely classification (multiclass)
+        # Float with > 20 unique values: likely regression (continuous)
+        if is_integer and unique_count <= 20:
+            if unique_count == 2:
+                return 'BINARY'
+            else:
+                return 'MULTICLASS'
+        elif unique_count > 20:
+            return 'REGRESSION'
+        elif unique_count == 2:
+            return 'BINARY'
+        else:
+            return 'MULTICLASS'
     
     # If non-numeric, treat as classification based on unique count
     if unique_count == 2:
@@ -176,13 +185,22 @@ def _categorize_features(df: pd.DataFrame, feature_columns: List[str]) -> Dict[s
         
         # Check for numeric columns
         if pd.api.types.is_numeric_dtype(df[col]):
-            # Edge case: numeric columns with very few unique values (≤5)
-            # are treated as categorical
             unique_count = df[col].nunique()
+            cardinality_threshold = len(df) * 0.4
             
-            if unique_count <= 5:
+            # Filter: Numeric columns with ID-like names and high cardinality
+            # These should NOT be included in correlation analysis
+            id_keywords = ['id', 'code', 'no', 'num', 'index']
+            is_id_column = any(keyword in col_lower for keyword in id_keywords)
+            
+            if is_id_column and unique_count > cardinality_threshold:
+                # Numeric ID column: exclude from numeric features
+                feature_types['high_cardinality'].append(col)
+            elif unique_count <= 5:
+                # Very few unique values: treat as categorical
                 feature_types['categorical'].append(col)
             else:
+                # Regular numeric feature
                 feature_types['numeric'].append(col)
             continue
         
@@ -251,7 +269,7 @@ def plot_univariate_numeric(df: pd.DataFrame, col: str) -> go.Figure:
     # Create subplots: histogram and box plot
     fig = make_subplots(
         rows=2, cols=1,
-        subplot_titles=(f'Histogram of {col}', f'Box Plot of {col}'),
+        subplot_titles=(f'{col} Dağılımı (Histogram)', f'{col} Kutu Grafiği (Box Plot)'),
         specs=[[{"secondary_y": False}], [{"secondary_y": False}]],
         row_heights=[0.7, 0.3]
     )
@@ -260,7 +278,7 @@ def plot_univariate_numeric(df: pd.DataFrame, col: str) -> go.Figure:
     fig.add_trace(
         go.Histogram(
             x=data_clean,
-            name='Distribution',
+            name='Dağılım',
             nbinsx=30,
             opacity=0.7,
             marker_color='steelblue'
@@ -272,7 +290,7 @@ def plot_univariate_numeric(df: pd.DataFrame, col: str) -> go.Figure:
     fig.add_trace(
         go.Box(
             x=data_clean,
-            name='Quartiles',
+            name='Çeyreklikler (IQR)',
             marker_color='darkblue'
         ),
         row=2, col=1
@@ -280,9 +298,9 @@ def plot_univariate_numeric(df: pd.DataFrame, col: str) -> go.Figure:
     
     # Update layout
     fig.update_xaxes(title_text=col, row=2, col=1)
-    fig.update_yaxes(title_text='Frequency', row=1, col=1)
+    fig.update_yaxes(title_text='Frekans', row=1, col=1)
     fig.update_layout(
-        title_text=f'Univariate Analysis: {col}',
+        title_text=f'Tek Değişkenli Analiz: {col}',
         height=600,
         showlegend=True,
         hovermode='x unified'
@@ -334,8 +352,8 @@ def plot_univariate_categorical(df: pd.DataFrame, col: str, top_n: int = 10) -> 
         x=value_counts.values,
         y=value_counts.index,
         orientation='h',
-        labels={'x': 'Count', 'y': col},
-        title=f'Top {top_n} Categories: {col}',
+        labels={'x': 'Adet', 'y': col},
+        title=f'{col} En Çok Tekrarlanan {top_n} Kategori',
         color=value_counts.values,
         color_continuous_scale='Viridis'
     )
@@ -406,6 +424,10 @@ def plot_bivariate_vs_target(
     # Remove NaN values
     df_clean = df[[feature_col, target_col]].dropna()
     
+    # Performance optimization: Sample if dataset is too large (> 5000 rows)
+    if len(df_clean) > 5000:
+        df_clean = df_clean.sample(n=5000, random_state=42)
+    
     # Case 1: REGRESSION + numeric -> Scatter plot
     if problem_type == 'REGRESSION' and feature_type == 'numeric':
         fig = px.scatter(
@@ -415,7 +437,7 @@ def plot_bivariate_vs_target(
                 'x': feature_col,
                 'y': target_col
             },
-            title=f'{feature_col} vs {target_col} (Regression)',
+            title=f'{feature_col} ve {target_col} İlişkisi (Regresyon)',
             color_discrete_sequence=['steelblue']
         )
         fig.update_layout(height=500, hovermode='closest')
@@ -430,7 +452,7 @@ def plot_bivariate_vs_target(
                 'x': target_col,
                 'y': feature_col
             },
-            title=f'{feature_col} Distribution by {target_col}',
+            title=f'{target_col} Değişkenine Göre {feature_col} Dağılımı',
             color=df_clean[target_col],
             color_discrete_sequence=px.colors.qualitative.Set2
         )
@@ -446,15 +468,15 @@ def plot_bivariate_vs_target(
             crosstab,
             x=crosstab.index,
             y=crosstab.columns.tolist(),
-            labels={'index': feature_col, 'value': 'Count'},
-            title=f'{feature_col} Distribution by {target_col}',
+            labels={'index': feature_col, 'value': 'Adet'},
+            title=f'{target_col} Değişkenine Göre {feature_col} Dağılımı',
             barmode='group',
             color_discrete_sequence=px.colors.qualitative.Set2
         )
         fig.update_layout(
             height=500,
             xaxis_title=feature_col,
-            yaxis_title='Count',
+            yaxis_title='Adet',
             hovermode='x unified'
         )
         return fig
@@ -518,13 +540,13 @@ def plot_correlation_heatmap(df: pd.DataFrame, numeric_cols: Optional[List[str]]
         text=corr_matrix.values.round(2),
         texttemplate='%{text:.2f}',
         textfont={"size": 10},
-        colorbar=dict(title="Correlation")
+        colorbar=dict(title="Korelasyon")
     ))
     
     fig.update_layout(
-        title='Correlation Heatmap',
-        xaxis_title='Features',
-        yaxis_title='Features',
+        title='Korelasyon Isı Haritası',
+        xaxis_title='Öznitelikler',
+        yaxis_title='Öznitelikler',
         height=600,
         width=700,
         hovermode='closest'
@@ -585,12 +607,21 @@ def plot_geo_map(
     if lon_col not in df.columns:
         raise KeyError(f"Column '{lon_col}' not found in DataFrame")
     
-    # Remove NaN values for lat/lon
+    # Remove NaN values for lat/lon and color column (if present)
     df_clean = df[[lat_col, lon_col]].copy()
     if color_col and color_col in df.columns:
         df_clean[color_col] = df[color_col]
     
-    df_clean = df_clean.dropna(subset=[lat_col, lon_col])
+    # Drop NaN values from lat/lon and color column (if present)
+    subset_cols = [lat_col, lon_col]
+    if color_col and color_col in df_clean.columns:
+        subset_cols.append(color_col)
+    
+    df_clean = df_clean.dropna(subset=subset_cols)
+    
+    # Performance optimization: Sample if dataset is too large (> 5000 rows)
+    if len(df_clean) > 5000:
+        df_clean = df_clean.sample(n=5000, random_state=42)
     
     if len(df_clean) == 0:
         raise ValueError(f"No valid data found for '{lat_col}' and '{lon_col}'")
@@ -607,9 +638,9 @@ def plot_geo_map(
             x=lon_col,
             y=lat_col,
             color=color_col,
-            title=f'Geographic Distribution: {lat_col} vs {lon_col}',
-            labels={lat_col: f'{lat_col} (Latitude)', 
-                   lon_col: f'{lon_col} (Longitude)'},
+            title=f'Coğrafi Dağılım: {lat_col} ve {lon_col}',
+            labels={lat_col: f'{lat_col} (Enlem)', 
+                   lon_col: f'{lon_col} (Boylam)'},
             hover_data=[lat_col, lon_col, color_col],
             color_continuous_scale='Viridis'
         )
@@ -618,9 +649,9 @@ def plot_geo_map(
             df_clean,
             x=lon_col,
             y=lat_col,
-            title=f'Geographic Distribution: {lat_col} vs {lon_col}',
-            labels={lat_col: f'{lat_col} (Latitude)', 
-                   lon_col: f'{lon_col} (Longitude)'},
+            title=f'Coğrafi Dağılım: {lat_col} ve {lon_col}',
+            labels={lat_col: f'{lat_col} (Enlem)', 
+                   lon_col: f'{lon_col} (Boylam)'},
             hover_data=[lat_col, lon_col],
             color_discrete_sequence=['steelblue']
         )
@@ -628,8 +659,8 @@ def plot_geo_map(
     fig.update_layout(
         height=600,
         hovermode='closest',
-        xaxis_title=f'{lon_col} (Longitude)',
-        yaxis_title=f'{lat_col} (Latitude)'
+        xaxis_title=f'{lon_col} (Boylam)',
+        yaxis_title=f'{lat_col} (Enlem)'
     )
     
     return fig
@@ -813,6 +844,11 @@ def generate_auto_eda_report(
         if 'id' not in col.lower() and 'index' not in col.lower()
     ]
     
+    # Include target column in correlation if it's numeric
+    if target_col in df.columns and pd.api.types.is_numeric_dtype(df[target_col]):
+        if target_col not in numeric_for_corr:
+            numeric_for_corr.append(target_col)
+    
     if numeric_for_corr:
         try:
             fig = plot_correlation_heatmap(df, numeric_for_corr)
@@ -873,42 +909,42 @@ def print_eda_report_summary(report: Dict[str, Any]) -> None:
     >>> print_eda_report_summary(report)
     """
     print("\n" + "=" * 70)
-    print("AUTOMATED EDA REPORT SUMMARY")
+    print("OTOMATİK EDA RAPOR ÖZETİ")
     print("=" * 70)
     
     # Dataset structure
     structure = report.get('structure', {})
-    print(f"\nDataset Structure:")
-    print(f"  Problem Type: {structure.get('problem_type', 'Unknown')}")
+    print(f"\nVeri Seti Yapısı:")
+    print(f"  Problem Tipi: {structure.get('problem_type', 'Bilinmeyen')}")
     
     feature_types = structure.get('feature_types', {})
-    print(f"  Feature Types:")
+    print(f"  Öznitelik Türleri:")
     for ftype, features in feature_types.items():
         if features:
-            print(f"    {ftype}: {len(features)} features")
+            print(f"    {ftype}: {len(features)} öznitelik")
     
     # Plots generated
-    print(f"\nPlots Generated:")
+    print(f"\nÜretilen Grafikler:")
     univariate_count = len(report.get('univariate_plots', {}))
     bivariate_count = len(report.get('bivariate_plots', {}))
     summary_count = len(report.get('summary_plots', {}))
     
-    print(f"  Univariate Plots: {univariate_count}")
-    print(f"  Bivariate Plots: {bivariate_count}")
-    print(f"  Summary Plots: {summary_count}")
+    print(f"  Tek Değişkenli Grafikler: {univariate_count}")
+    print(f"  İki Değişkenli Grafikler: {bivariate_count}")
+    print(f"  Özet Grafikler: {summary_count}")
     
     # Metadata
     metadata = report.get('report_metadata', {})
-    print(f"\nReport Metadata:")
-    print(f"  Features Processed: {metadata.get('features_processed', 0)}")
-    print(f"  Features Skipped: {metadata.get('features_skipped', 0)}")
+    print(f"\nRapor Metaveri:")
+    print(f"  İşlenen Öznitelikler: {metadata.get('features_processed', 0)}")
+    print(f"  Atlanan Öznitelikler: {metadata.get('features_skipped', 0)}")
     
     errors = metadata.get('errors', [])
     if errors:
-        print(f"  Errors ({len(errors)}):")
+        print(f"  Hatalar ({len(errors)}):")
         for error in errors:
             print(f"    - {error}")
     else:
-        print(f"  Errors: None")
+        print(f"  Hatalar: Yok")
     
     print("\n" + "=" * 70)
