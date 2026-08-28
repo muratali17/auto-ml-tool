@@ -14,8 +14,6 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from scipy import stats
-import seaborn as sns
-import matplotlib.pyplot as plt
 
 
 def analyze_dataset_structure(df: pd.DataFrame, target_col: str) -> Dict[str, Any]:
@@ -138,7 +136,7 @@ def _determine_problem_type(target_series: pd.Series) -> str:
 
 def _categorize_features(df: pd.DataFrame, feature_columns: List[str]) -> Dict[str, List[str]]:
     """
-    Categorize features into numeric, categorical, datetime, and geo types.
+    Categorize features into numeric, categorical, datetime, geo, and high_cardinality types.
     
     Parameters
     ----------
@@ -150,14 +148,15 @@ def _categorize_features(df: pd.DataFrame, feature_columns: List[str]) -> Dict[s
     Returns
     -------
     Dict[str, List[str]]
-        A dictionary with keys 'numeric', 'categorical', 'datetime', 'geo',
+        A dictionary with keys 'numeric', 'categorical', 'datetime', 'geo', 'high_cardinality',
         each containing a list of column names.
     """
     feature_types = {
         'numeric': [],
         'categorical': [],
         'datetime': [],
-        'geo': []
+        'geo': [],
+        'high_cardinality': []
     }
     
     geo_keywords = ['latitude', 'longitude', 'lat', 'lon', 'latitude_', 'longitude_']
@@ -185,6 +184,15 @@ def _categorize_features(df: pd.DataFrame, feature_columns: List[str]) -> Dict[s
                 feature_types['categorical'].append(col)
             else:
                 feature_types['numeric'].append(col)
+            continue
+        
+        # Check for high cardinality categorical columns (ID, Ticket, Name, etc.)
+        # Filters: unique values > 40% of row count AND > 20 unique values
+        unique_count = df[col].nunique()
+        cardinality_threshold = len(df) * 0.4
+        
+        if unique_count > cardinality_threshold and unique_count > 20:
+            feature_types['high_cardinality'].append(col)
             continue
         
         # Default: treat as categorical (object, string types, etc.)
@@ -398,12 +406,11 @@ def plot_bivariate_vs_target(
     # Remove NaN values
     df_clean = df[[feature_col, target_col]].dropna()
     
-    # Case 1: REGRESSION + numeric -> Scatter with trend line
+    # Case 1: REGRESSION + numeric -> Scatter plot
     if problem_type == 'REGRESSION' and feature_type == 'numeric':
         fig = px.scatter(
             x=df_clean[feature_col],
             y=df_clean[target_col],
-            trendline='ols',
             labels={
                 'x': feature_col,
                 'y': target_col
@@ -626,3 +633,276 @@ def plot_geo_map(
     )
     
     return fig
+
+
+# ============================================================================
+# ORCHESTRATOR FUNCTION
+# ============================================================================
+
+def generate_auto_eda_report(
+    df: pd.DataFrame,
+    target_col: str,
+    max_features: int = 5
+) -> Dict[str, Any]:
+    """
+    Generate a comprehensive automated EDA report with end-to-end analysis.
+    
+    This orchestrator function performs full exploratory data analysis by:
+    1. Analyzing dataset structure and problem type
+    2. Generating univariate plots for top features
+    3. Creating bivariate plots showing feature-target relationships
+    4. Producing multivariate visualizations (correlation, geo)
+    
+    All operations include robust error handling to skip failed plots gracefully
+    without crashing the entire report generation.
+    
+    Parameters
+    ----------
+    df : pd.DataFrame
+        The input DataFrame to analyze.
+    target_col : str
+        The name of the target column.
+    max_features : int, optional
+        Maximum number of features to plot in univariate and bivariate sections
+        (default=5). Applies separately to numeric and categorical features.
+    
+    Returns
+    -------
+    Dict[str, Any]
+        A structured dictionary containing:
+        - 'structure' (dict): Output from analyze_dataset_structure()
+          with keys: 'problem_type', 'feature_types'
+        - 'univariate_plots' (dict): {column_name: plotly_fig} for numeric
+          and categorical features
+        - 'bivariate_plots' (dict): {column_name: plotly_fig} showing
+          feature vs target relationships
+        - 'summary_plots' (dict): {plot_type: plotly_fig} containing
+          'correlation_heatmap' and optional 'geo_map'
+        - 'report_metadata' (dict): Metadata about report generation including
+          'features_processed', 'features_skipped', 'errors'
+    
+    Raises
+    ------
+    KeyError
+        If the target_col is not found in the DataFrame.
+    ValueError
+        If the DataFrame is empty.
+    
+    Examples
+    --------
+    >>> import pandas as pd
+    >>> df = pd.DataFrame({
+    ...     'age': [25, 30, 35, 40],
+    ...     'salary': [50000, 60000, 70000, 80000],
+    ...     'target': [0, 1, 0, 1]
+    ... })
+    >>> report = generate_auto_eda_report(df, 'target', max_features=2)
+    >>> print(report['structure']['problem_type'])
+    'BINARY'
+    >>> fig = report['univariate_plots']['age']
+    >>> fig.show()
+    """
+    
+    # Validate inputs
+    if df.empty:
+        raise ValueError("DataFrame is empty")
+    
+    if target_col not in df.columns:
+        raise KeyError(f"Target column '{target_col}' not found in DataFrame")
+    
+    # Initialize report structure
+    report = {
+        'structure': {},
+        'univariate_plots': {},
+        'bivariate_plots': {},
+        'summary_plots': {},
+        'report_metadata': {
+            'features_processed': 0,
+            'features_skipped': 0,
+            'errors': []
+        }
+    }
+    
+    # Step 1: Analyze dataset structure
+    try:
+        report['structure'] = analyze_dataset_structure(df, target_col)
+    except Exception as e:
+        report['report_metadata']['errors'].append(
+            f"Error analyzing dataset structure: {str(e)}"
+        )
+        return report
+    
+    feature_types = report['structure']['feature_types']
+    problem_type = report['structure']['problem_type']
+    
+    # Prepare feature lists (exclude target)
+    numeric_features = [f for f in feature_types['numeric'] if f != target_col]
+    categorical_features = [f for f in feature_types['categorical'] if f != target_col]
+    geo_features = feature_types['geo']
+    
+    # Limit to max_features
+    numeric_features_subset = numeric_features[:max_features]
+    categorical_features_subset = categorical_features[:max_features]
+    
+    # Step 2: Generate univariate plots
+    all_feature_subsets = {
+        'numeric': numeric_features_subset,
+        'categorical': categorical_features_subset
+    }
+    
+    for feature_type, features in all_feature_subsets.items():
+        for col in features:
+            try:
+                if feature_type == 'numeric':
+                    fig = plot_univariate_numeric(df, col)
+                else:  # categorical
+                    fig = plot_univariate_categorical(df, col)
+                
+                report['univariate_plots'][col] = fig
+                report['report_metadata']['features_processed'] += 1
+                
+            except Exception as e:
+                report['report_metadata']['features_skipped'] += 1
+                report['report_metadata']['errors'].append(
+                    f"Univariate plot for '{col}' ({feature_type}): {str(e)}"
+                )
+    
+    # Step 3: Generate bivariate plots (feature vs target)
+    for col in numeric_features_subset:
+        try:
+            fig = plot_bivariate_vs_target(
+                df,
+                feature_col=col,
+                target_col=target_col,
+                problem_type=problem_type,
+                feature_type='numeric'
+            )
+            report['bivariate_plots'][col] = fig
+            report['report_metadata']['features_processed'] += 1
+            
+        except Exception as e:
+            report['report_metadata']['features_skipped'] += 1
+            report['report_metadata']['errors'].append(
+                f"Bivariate plot for '{col}' (numeric vs target): {str(e)}"
+            )
+    
+    for col in categorical_features_subset:
+        try:
+            fig = plot_bivariate_vs_target(
+                df,
+                feature_col=col,
+                target_col=target_col,
+                problem_type=problem_type,
+                feature_type='categorical'
+            )
+            report['bivariate_plots'][col] = fig
+            report['report_metadata']['features_processed'] += 1
+            
+        except Exception as e:
+            report['report_metadata']['features_skipped'] += 1
+            report['report_metadata']['errors'].append(
+                f"Bivariate plot for '{col}' (categorical vs target): {str(e)}"
+            )
+    
+    # Step 4: Generate multivariate plots
+    
+    # 4a: Correlation heatmap (if numeric features exist)
+    if numeric_features_subset:
+        try:
+            fig = plot_correlation_heatmap(df, numeric_features_subset)
+            report['summary_plots']['correlation_heatmap'] = fig
+            
+        except Exception as e:
+            report['report_metadata']['errors'].append(
+                f"Correlation heatmap generation: {str(e)}"
+            )
+    
+    # 4b: Geographic map (if geo features exist)
+    if len(geo_features) >= 2:
+        # Find latitude and longitude columns independently
+        lat_col = None
+        lon_col = None
+        
+        for col in geo_features:
+            col_lower = col.lower()
+            if 'lat' in col_lower and lat_col is None:
+                lat_col = col
+            if 'lon' in col_lower and lon_col is None:
+                lon_col = col
+        
+        # Only create geo map if both latitude and longitude were found
+        if lat_col and lon_col:
+            # Try to find a suitable color column (target or first numeric feature)
+            color_col = target_col if target_col in df.columns else None
+            if not color_col and numeric_features_subset:
+                color_col = numeric_features_subset[0]
+            
+            try:
+                fig = plot_geo_map(df, lat_col, lon_col, color_col=color_col)
+                report['summary_plots']['geo_map'] = fig
+                
+            except Exception as e:
+                report['report_metadata']['errors'].append(
+                    f"Geographic map generation ({lat_col}, {lon_col}): {str(e)}"
+                )
+    
+    return report
+
+
+def print_eda_report_summary(report: Dict[str, Any]) -> None:
+    """
+    Print a human-readable summary of the EDA report.
+    
+    This utility function displays key information about the generated report
+    including dataset structure, number of plots generated, and any errors.
+    
+    Parameters
+    ----------
+    report : Dict[str, Any]
+        The report dictionary returned by generate_auto_eda_report().
+    
+    Examples
+    --------
+    >>> report = generate_auto_eda_report(df, 'target')
+    >>> print_eda_report_summary(report)
+    """
+    print("\n" + "=" * 70)
+    print("AUTOMATED EDA REPORT SUMMARY")
+    print("=" * 70)
+    
+    # Dataset structure
+    structure = report.get('structure', {})
+    print(f"\nDataset Structure:")
+    print(f"  Problem Type: {structure.get('problem_type', 'Unknown')}")
+    
+    feature_types = structure.get('feature_types', {})
+    print(f"  Feature Types:")
+    for ftype, features in feature_types.items():
+        if features:
+            print(f"    {ftype}: {len(features)} features")
+    
+    # Plots generated
+    print(f"\nPlots Generated:")
+    univariate_count = len(report.get('univariate_plots', {}))
+    bivariate_count = len(report.get('bivariate_plots', {}))
+    summary_count = len(report.get('summary_plots', {}))
+    
+    print(f"  Univariate Plots: {univariate_count}")
+    print(f"  Bivariate Plots: {bivariate_count}")
+    print(f"  Summary Plots: {summary_count}")
+    
+    # Metadata
+    metadata = report.get('report_metadata', {})
+    print(f"\nReport Metadata:")
+    print(f"  Features Processed: {metadata.get('features_processed', 0)}")
+    print(f"  Features Skipped: {metadata.get('features_skipped', 0)}")
+    
+    errors = metadata.get('errors', [])
+    if errors:
+        print(f"  Errors ({len(errors)}):")
+        for error in errors:
+            print(f"    - {error}")
+    else:
+        print(f"  Errors: None")
+    
+    print("\n" + "=" * 70)

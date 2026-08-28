@@ -13,7 +13,9 @@ from eda_engine import (
     plot_univariate_categorical,
     plot_bivariate_vs_target,
     plot_correlation_heatmap,
-    plot_geo_map
+    plot_geo_map,
+    generate_auto_eda_report,
+    print_eda_report_summary
 )
 
 
@@ -272,6 +274,185 @@ def test_plot_geo_map():
     print()
 
 
+def test_orchestrator_binary_classification():
+    """Test generate_auto_eda_report with binary classification dataset."""
+    print("=" * 60)
+    print("TEST 13: Orchestrator - Binary Classification Report")
+    print("=" * 60)
+    
+    df = pd.DataFrame({
+        'age': np.random.normal(40, 15, 100),
+        'salary': np.random.normal(50000, 20000, 100),
+        'experience': np.random.normal(10, 5, 100),
+        'education': np.random.choice(['HS', 'BS', 'MS', 'PhD'], 100),
+        'department': np.random.choice(['Sales', 'IT', 'HR', 'Finance'], 100),
+        'hired': np.random.choice([0, 1], 100)
+    })
+    
+    try:
+        report = generate_auto_eda_report(df, 'hired', max_features=2)
+        print(f"✓ Report generated successfully")
+        print(f"  Problem Type: {report['structure']['problem_type']}")
+        print(f"  Univariate Plots: {len(report['univariate_plots'])}")
+        print(f"  Bivariate Plots: {len(report['bivariate_plots'])}")
+        print(f"  Summary Plots: {len(report['summary_plots'])}")
+        print(f"  Features Processed: {report['report_metadata']['features_processed']}")
+        print(f"  Features Skipped: {report['report_metadata']['features_skipped']}")
+        if report['report_metadata']['errors']:
+            print(f"  Errors: {len(report['report_metadata']['errors'])}")
+        print_eda_report_summary(report)
+    except Exception as e:
+        print(f"✗ Error: {e}")
+    print()
+
+
+def test_orchestrator_multiclass_classification():
+    """Test generate_auto_eda_report with multiclass classification dataset."""
+    print("=" * 60)
+    print("TEST 14: Orchestrator - Multiclass Classification Report")
+    print("=" * 60)
+    
+    df = pd.DataFrame({
+        'petal_length': np.random.uniform(1, 7, 100),
+        'petal_width': np.random.uniform(0, 2.5, 100),
+        'sepal_length': np.random.uniform(4, 8, 100),
+        'sepal_width': np.random.uniform(2, 4.5, 100),
+        'species': np.random.choice(['setosa', 'versicolor', 'virginica'], 100)
+    })
+    
+    try:
+        report = generate_auto_eda_report(df, 'species', max_features=3)
+        print(f"✓ Report generated successfully")
+        print(f"  Problem Type: {report['structure']['problem_type']}")
+        print(f"  Univariate Plots: {len(report['univariate_plots'])}")
+        print(f"  Bivariate Plots: {len(report['bivariate_plots'])}")
+        print(f"  Summary Plots: {len(report['summary_plots'])}")
+        print(f"  Features Processed: {report['report_metadata']['features_processed']}")
+        print_eda_report_summary(report)
+    except Exception as e:
+        print(f"✗ Error: {e}")
+    print()
+
+
+def test_orchestrator_regression():
+    """Test generate_auto_eda_report with regression dataset."""
+    print("=" * 60)
+    print("TEST 15: Orchestrator - Regression Report")
+    print("=" * 60)
+    
+    df = pd.DataFrame({
+        'square_feet': np.random.uniform(1000, 5000, 100),
+        'bedrooms': np.random.choice([1, 2, 3, 4, 5], 100),
+        'bathrooms': np.random.choice([1, 1.5, 2, 2.5, 3], 100),
+        'age': np.random.uniform(0, 100, 100),
+        'price': np.random.uniform(150000, 1000000, 100)
+    })
+    
+    try:
+        report = generate_auto_eda_report(df, 'price', max_features=3)
+        print(f"✓ Report generated successfully")
+        print(f"  Problem Type: {report['structure']['problem_type']}")
+        print(f"  Univariate Plots: {len(report['univariate_plots'])}")
+        print(f"  Bivariate Plots: {len(report['bivariate_plots'])}")
+        print(f"  Summary Plots: {len(report['summary_plots'])}")
+        print(f"  Features Processed: {report['report_metadata']['features_processed']}")
+        print_eda_report_summary(report)
+    except Exception as e:
+        print(f"✗ Error: {e}")
+    print()
+
+
+def test_orchestrator_with_geo():
+    """Test generate_auto_eda_report with geographic features."""
+    print("=" * 60)
+    print("TEST 16: Orchestrator - Report with Geographic Data")
+    print("=" * 60)
+    
+    df = pd.DataFrame({
+        'latitude': [40.7128, 34.0522, 41.8781, 29.7604, 39.7392] * 20,
+        'longitude': [-74.0060, -118.2437, -87.6298, -95.3698, -104.9903] * 20,
+        'population': np.random.randint(500000, 8500000, 100),
+        'crime_rate': np.random.uniform(0, 1000, 100),
+        'safety_score': np.random.randint(0, 100, 100)
+    })
+    
+    try:
+        report = generate_auto_eda_report(df, 'safety_score', max_features=2)
+        print(f"✓ Report generated successfully")
+        print(f"  Problem Type: {report['structure']['problem_type']}")
+        print(f"  Univariate Plots: {len(report['univariate_plots'])}")
+        print(f"  Bivariate Plots: {len(report['bivariate_plots'])}")
+        print(f"  Summary Plots: {len(report['summary_plots'])}")
+        if 'geo_map' in report['summary_plots']:
+            print(f"  Geographic Map: Generated ✓")
+        print_eda_report_summary(report)
+    except Exception as e:
+        print(f"✗ Error: {e}")
+    print()
+
+
+def test_orchestrator_max_features():
+    """Test generate_auto_eda_report with different max_features values."""
+    print("=" * 60)
+    print("TEST 17: Orchestrator - Testing max_features Parameter")
+    print("=" * 60)
+    
+    df = pd.DataFrame({
+        'feat_a': np.random.normal(0, 1, 100),
+        'feat_b': np.random.normal(0, 1, 100),
+        'feat_c': np.random.normal(0, 1, 100),
+        'feat_d': np.random.normal(0, 1, 100),
+        'cat_a': np.random.choice(['A', 'B', 'C'], 100),
+        'cat_b': np.random.choice(['X', 'Y'], 100),
+        'target': np.random.choice([0, 1], 100)
+    })
+    
+    try:
+        # Test with max_features=1
+        report1 = generate_auto_eda_report(df, 'target', max_features=1)
+        print(f"✓ max_features=1:")
+        print(f"  Univariate Plots: {len(report1['univariate_plots'])}")
+        print(f"  Bivariate Plots: {len(report1['bivariate_plots'])}")
+        
+        # Test with max_features=3
+        report3 = generate_auto_eda_report(df, 'target', max_features=3)
+        print(f"✓ max_features=3:")
+        print(f"  Univariate Plots: {len(report3['univariate_plots'])}")
+        print(f"  Bivariate Plots: {len(report3['bivariate_plots'])}")
+    except Exception as e:
+        print(f"✗ Error: {e}")
+    print()
+
+
+def test_orchestrator_error_handling():
+    """Test generate_auto_eda_report error handling with edge cases."""
+    print("=" * 60)
+    print("TEST 18: Orchestrator - Error Handling and Robustness")
+    print("=" * 60)
+    
+    # Dataset with some NaN values
+    df = pd.DataFrame({
+        'feat1': [1, 2, np.nan, 4, 5] * 20,
+        'feat2': [1, np.nan, 3, 4, 5] * 20,
+        'feat3': ['A', 'B', np.nan, 'C', 'A'] * 20,
+        'target': np.random.choice([0, 1], 100)
+    })
+    
+    try:
+        report = generate_auto_eda_report(df, 'target', max_features=3)
+        print(f"✓ Report generated despite NaN values")
+        print(f"  Features Processed: {report['report_metadata']['features_processed']}")
+        print(f"  Features Skipped: {report['report_metadata']['features_skipped']}")
+        if report['report_metadata']['errors']:
+            print(f"  Errors Handled: {len(report['report_metadata']['errors'])}")
+            for error in report['report_metadata']['errors'][:2]:
+                print(f"    - {error[:60]}...")
+        print_eda_report_summary(report)
+    except Exception as e:
+        print(f"✗ Error: {e}")
+    print()
+
+
 if __name__ == '__main__':
     # Test structure analysis functions
     test_binary_classification()
@@ -288,6 +469,14 @@ if __name__ == '__main__':
     test_plot_bivariate_categorical()
     test_plot_correlation_heatmap()
     test_plot_geo_map()
+    
+    # Test orchestrator function
+    test_orchestrator_binary_classification()
+    test_orchestrator_multiclass_classification()
+    test_orchestrator_regression()
+    test_orchestrator_with_geo()
+    test_orchestrator_max_features()
+    test_orchestrator_error_handling()
     
     print("=" * 60)
     print("All tests completed successfully!")
